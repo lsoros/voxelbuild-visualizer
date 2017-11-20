@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Block visualizer</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				color: #61443e;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+
+				background-color: #bfd1e5;
+				margin: 0px;
+				overflow: hidden;
+			}
+
+			#info {
+				position: absolute;
+				top: 0px; width: 100%;
+				padding: 5px;
+			}
+
+			a {
+
+				color: #a06851;
+			}
+
+			#oldie {
+				background:rgb(100,0,0) !important;
+				color:#fff !important;
+				margin-top:10em !important;
+			}
+			#oldie a { color:#fff }
+
+		</style>
+	</head>
+	<body>
+
+		<div id="container"><br /><br /><br /><br /><br />Generating world...</div>
+
+		<script src="../build/three.js"></script>
+
+		<script src="js/controls/FirstPersonControls.js"></script>
+        <script src="js/controls/TrackballControls.js"></script>
+        <script src="js/KeyboardState.js"></script>
+		<script src="js/ImprovedNoise.js"></script>
+		<script src="js/Detector.js"></script>
+		<script src="js/libs/stats.min.js"></script>
+        <script src="papaparse/papaparse.min.js"></script>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+        <script src="game-timer-master/timer.js"></script>
+
+		<script>
+
+			if ( ! Detector.webgl ) {
+
+				Detector.addGetWebGLMessage();
+				document.getElementById( 'container' ).innerHTML = "";
+
+			}
+
+			var info, fileDiv, helpDiv, keysDiv, helpButton, container, stats, camera, controls, scene, renderer, matrix, mesh, actorMesh, cone, pxGeometry, 
+                nxGeometry, pyGeometry, pzGeometry, nzGeometry, geometry, texture, mesh, coneGeometry, coneMaterial, boxTexture;
+                
+			var worldWidth, worldDepth, worldHeight, worldHalfWidth, worldHalfDepth, worldHalfHeight, data, actionIndex;
+            var actions = new Array();
+
+			var clock = new THREE.Clock();
+            
+            var blockList = new Array();
+            var numBlocks, fileIndex, jsonData, storedE;
+            var worldFiles, historyFiles, combinedFiles, keyboardLocked, filesLoaded;
+            
+            var colorVal, blockFaceSize, blockGeometry, animationModeBlockHeight;
+            var f;
+            
+            var keyboard = new KeyboardState();
+            
+            var timer;
+            var intervalId;
+            var delta = 1000;
+            var animationMode;
+
+			init();
+			animate();
+
+			function init() {
+                
+                animationMode = false;
+                keyboardLocked = false;
+                filesLoaded = false;
+                
+                scene = new THREE.Scene();
+				container = document.getElementById( 'container' );
+                
+                // initialize camera and lights
+                camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 20000 );
+                camera.position.x = 0;
+                camera.position.y = 2000.0;
+                camera.position.z = 1500.0;
+                camera.rotation.y = 180 * Math.PI / 180;
+                //camera.rotation.x = 90 * Math.PI / 180;
+                scene.add(camera);
+
+                var ambientLight = new THREE.AmbientLight( 0xcccccc );
+                scene.add( ambientLight );
+
+                var directionalLight = new THREE.DirectionalLight( 0xffffff, 2 );
+                directionalLight.position.set( 1, 1, 0.5 ).normalize();
+                scene.add( directionalLight );
+
+				//controls = new THREE.FirstPersonControls( camera );
+                controls = new THREE.TrackballControls( camera );
+                
+				controls.movementSpeed = 1000;
+				controls.lookVertical = true;
+                controls.rotateSpeed = 3.0;
+                controls.minDistance = 300.0
+
+				renderer = new THREE.WebGLRenderer();
+				renderer.setClearColor( 0xbfd1e5 );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+				container.innerHTML = "";
+				container.appendChild( renderer.domElement );
+
+				stats = new Stats();
+				//container.appendChild( stats.dom );
+                
+                info = document.createElement('div');
+				info.style.position = 'absolute';
+				info.style.top = '10px';
+				info.style.width = '100%';
+				info.style.textAlign = 'center';
+                
+                //helpDiv = document.createElement( 'div' );
+                //helpDiv.style.float = "left";
+                //helpDiv.style.marginLeft = '10px';
+				//helpDiv.innerHTML = '<img src="icons/help.png" />';
+                
+                fileDiv = document.createElement('div');
+                fileDiv.innerHTML = 'JSON file: <input id="the-file-input" multiple="multiple" type="file" onchange="handleFiles(this.files)" accept=".json">';
+                
+                //info.appendChild(helpDiv);
+                info.appendChild(fileDiv);
+				container.appendChild(info);
+                
+                keysDiv = document.createElement('div');
+                keysDiv.style.position = "fixed";
+                keysDiv.style.bottom = '10px';
+                keysDiv.style.width = "100%";
+                keysDiv.style.margin = "0 auto";
+                keysDiv.innerHTML = '<img src="icons/left-arrow.png" id="leftArrow" onclick="getNextLeft()"/>      <img src="icons/play.png" id="play" onclick="play()"/>      <img src="icons/right-arrow.png" id="rightArrow" onclick="getNextRight()"/>';
+                keysDiv.style.visibility = "hidden";
+                container.appendChild(keysDiv);
+
+				window.addEventListener( 'resize', onWindowResize, false );
+                
+                fileIndex = 0;
+                
+                colorVal = 255.0;
+                blockFaceSize = 100;
+                blockGeometry = new THREE.BoxGeometry( blockFaceSize, blockFaceSize, blockFaceSize );
+			}
+            
+            function handleFiles(files){
+                matrix = new THREE.Matrix4();
+
+                // filter out irrelevant JSON files
+                worldFiles = new Array();
+                historyFiles = new Array();
+                combinedFiles = new Array();
+                for(var i=0; i<files.length; i++)
+                {
+                    if(files[i].name.includes("world"))
+                        worldFiles.push(files[i]);
+                    else if(files[i].name.includes("history"))
+                        historyFiles.push(files[i]);
+                    else if(files[i].name.includes("wh"))
+                       combinedFiles.push(files[i]);           
+                }
+                
+                if(combinedFiles.length > 0)
+                {
+                    f = combinedFiles[fileIndex];
+                    animationModeBlockHeight = blockFaceSize;
+                }
+                else
+                {
+                    f = worldFiles[fileIndex];
+                    animationModeBlockHeight = 0;
+                }
+                info.innerHTML = f.name;
+                var reader = new FileReader();
+                
+                reader.onload = (function(theFile) {
+                    return function(e) {
+                        
+                        filesLoaded = true;
+                        
+                        // Read JSON and generate blocks
+                        jsonData = $.parseJSON(e.target.result);
+
+                        worldWidth = jsonData.upperBound[0] - jsonData.lowerBound[0] + 1;
+                        worldDepth = jsonData.upperBound[1] - jsonData.lowerBound[1] + 1;
+                        worldHeight = jsonData.upperBound[2] - jsonData.lowerBound[2];
+
+                        worldHalfWidth = worldWidth / 2;
+                        worldHalfDepth = worldDepth / 2;
+                        
+                        coneGeometry = new THREE.ConeGeometry( 5, 80, 32 );
+                        coneMaterial = new THREE.MeshBasicMaterial( {color: 0x660066} );
+
+                        texture = new THREE.TextureLoader().load( 'textures/minecraft/grass.png' );
+                        texture.magFilter = THREE.NearestFilter;
+                        texture.minFilter = THREE.LinearMipMapLinearFilter;
+                        
+                        boxTexture = new THREE.TextureLoader().load( 'textures/crate.gif' );
+                        boxTexture.magFilter = THREE.NearestFilter;
+                        boxTexture.minFilter = THREE.LinearMipMapLinearFilter;
+
+                        //mesh = new THREE.Mesh( geometry, new THREE.MeshLambertMaterial( { map: texture } ) );
+                        //scene.add( mesh );
+
+                     blockList = new Array();
+                    // generate new blocks
+                    numBlocks = 0;
+                    if(!theFile.name.includes("wh"))
+                    {
+                        for(var x = jsonData.lowerBound[0]; x < jsonData.upperBound[0]+1; x++)
+                        {
+                            for(var y=jsonData.lowerBound[1]; y < jsonData.upperBound[1]+1; y++)
+                            {
+                                object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { map: texture } ) );
+                                object.position.set(x*blockFaceSize, 0, y*blockFaceSize);
+                                object.castShadow = true;
+                                object.receiveShadow = true;
+                                scene.add( object );
+                                blockList.push(object);
+                                numBlocks++;
+                            }
+                        }
+                    }
+                        
+                    for ( var i = 0; i < jsonData.blocks.length; i ++ ) {
+                        
+                        if(theFile.name.includes("wh") && jsonData.blocks[i][2]==0)
+                            object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { map: texture } ) );
+                        else
+                            object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { map: boxTexture } ) );
+                        object.position.set(jsonData.blocks[i][0]*blockFaceSize, blockFaceSize + jsonData.blocks[i][2]*blockFaceSize, jsonData.blocks[i][1]*blockFaceSize);
+
+                        object.castShadow = true;
+                        object.receiveShadow = true;
+                        scene.add( object );
+                        blockList.push(object);
+                        numBlocks++;
+                    }
+                        
+                    keysDiv.style.visibility = "visible";
+                    document.getElementById("leftArrow").style.visibility = "hidden";
+                };
+                })(f);
+                                 
+				reader.readAsText(f);
+            }
+            
+            function generateActions(){
+                if(combinedFiles.length > 0)
+                    f = combinedFiles[fileIndex];
+                else
+                    f = historyFiles[fileIndex];
+                
+                var reader = new FileReader();
+                reader.onload = (function() {
+                    return function(e) {
+
+                        // clear previous blocks
+                        for( var i=0; i<blockList.length; i++){
+                            scene.remove(blockList[i]);
+                        }
+                        
+                        jsonData = $.parseJSON(e.target.result);
+
+                        // generate new blocks
+                        blockList = new Array();
+                        numBlocks = 0;
+                        
+                        // add empty layer of blocks
+                        for(var x = jsonData.lowerBound[0]; x < jsonData.upperBound[0]+1; x++)
+                        {
+                            for(var y=jsonData.lowerBound[1]; y < jsonData.upperBound[1]+1; y++)
+                            {
+                                object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { map: texture } ) );
+                                object.position.set(x*blockFaceSize, animationModeBlockHeight, y*blockFaceSize);
+                                object.castShadow = true;
+                                object.receiveShadow = true;
+                                scene.add( object );
+                                blockList.push(object);
+                                numBlocks++;
+                            }
+                        }
+                        
+                        if(actions.size>0)
+                            actions.clear();
+                        actions = jsonData.actions;
+                        actionIndex = 0;
+                        
+                        // lock keyboard
+                        keyboardLocked = false;
+                    };
+                })(f);
+                
+                reader.readAsText(f);
+            }
+            
+            function generateBlocks(){
+                if(combinedFiles.length > 0)
+                    f = combinedFiles[fileIndex];
+                else
+                    f = worldFiles[fileIndex];
+                info.innerHTML = f.name;
+                
+                var reader = new FileReader();
+                reader.onload = (function() {
+                    return function(e) {
+
+                        // clear previous blocks
+                        for( var i=0; i<blockList.length; i++){
+                            scene.remove(blockList[i]);
+                        }
+                        blockList = new Array();
+                        numBlocks = 0;
+                        
+                        // parse savedFiles[fileIndex]
+                        jsonData = $.parseJSON(e.target.result);
+                        
+                        // generate empty layer of blocks
+                        if(worldFiles.length > 0)
+                        {
+                            for(var x = jsonData.lowerBound[0]; x < jsonData.upperBound[0]+1; x++)
+                            {
+                                for(var y=jsonData.lowerBound[1]; y < jsonData.upperBound[1]+1; y++)
+                                {
+                                    object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { map: texture } ) );
+                                    object.position.set(x*blockFaceSize, 0, y*blockFaceSize);
+                                    object.castShadow = true;
+                                    object.receiveShadow = true;
+                                    scene.add( object );
+                                    blockList.push(object);
+                                    numBlocks++;
+                                }
+                            }
+                        }
+
+                        // generate constructed blocks
+                        for ( var i = 0; i < jsonData.blocks.length; i ++ ) {
+
+                            if(combinedFiles.length>0 && jsonData.blocks[i][2]==0)
+                                object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { map: texture } ) );
+                            else
+                                object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { map: boxTexture } ) );
+                            object.position.set(jsonData.blocks[i][0]*blockFaceSize, blockFaceSize + jsonData.blocks[i][2]*blockFaceSize, jsonData.blocks[i][1]*blockFaceSize);
+
+                            object.castShadow = true;
+                            object.receiveShadow = true;
+                            scene.add( object );
+                            blockList.push(object);
+                            numBlocks++;
+                        }  
+                        
+                        // lock keyboard
+                        keyboardLocked = false;
+                    };
+                })(f);
+                                 
+				reader.readAsText(f); 
+            }
+            
+             function initActorMesh() {
+                var loader = new THREE.JSONLoader();
+                loader.load('models/monkeyhead.json', function(actorGeometry) {
+                    actorMesh = new THREE.Mesh(actorGeometry);
+                    scene.add(actorMesh);
+                });
+            }
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+				//controls.handleResize();
+
+			}
+            
+            function removeObjectAt(x, y, z){
+                for( var i=0; i<scene.children.length; i++){
+                    if(typeof scene.children[i].geometry != 'undefined' && scene.children[i].geometry.type=="BoxGeometry" && scene.children[i].position.x==x*blockFaceSize  && scene.children[i].position.y==(blockFaceSize + (y*blockFaceSize)) && scene.children[i].position.z==z*blockFaceSize){
+                        scene.remove(scene.children[i]);
+                        //blockList.remove(scene.children[i]);
+                        break;
+                    }
+                }
+            }
+
+			function nextStep(){
+                keyboard.update();
+                if (filesLoaded)
+                {
+                   if(actionIndex < actions.length)
+                    {
+                        switch(actions[actionIndex][0]){ 
+                            case 0:
+                                // turn left
+                                cone.rotation.y -= Math.PI/2.0;
+                                break;
+
+                            case 1:
+                                // turn right
+                                cone.rotation.y += Math.PI/2.0;
+                                break;
+
+                            case 2:
+                                // move forward
+                                cone.position.set(actions[actionIndex][1]*blockFaceSize, blockFaceSize + actions[actionIndex][3]*blockFaceSize, actions[actionIndex][2]*blockFaceSize);
+                                break;
+
+                            case 3:
+                                // move backward
+                                cone.position.set(actions[actionIndex][1]*blockFaceSize, blockFaceSize + actions[actionIndex][3]*blockFaceSize, actions[actionIndex][2]*blockFaceSize);
+                                break;
+
+                            case 4:
+                                // place block
+                                object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { map: boxTexture } ) );
+                                object.position.set(actions[actionIndex][1]*blockFaceSize, blockFaceSize + actions[actionIndex][3]*blockFaceSize, actions[actionIndex][2]*blockFaceSize);
+                                object.castShadow = true;
+                                object.receiveShadow = true;
+                                scene.add( object );
+                                blockList.push(object);
+                                break;
+
+                            case 5:
+                                
+                                // remove block
+                                removeObjectAt(actions[actionIndex][1], actions[actionIndex][3], actions[actionIndex][2]);
+                                break;
+
+                        }
+
+                        actionIndex++;
+                    }
+                    else
+                    {
+                        // stop the animation
+                        animationMode = false;
+                        keyboardLocked = false;
+                        
+                        document.getElementById("play").style.visibility = "visible";
+                        if(fileIndex != Math.max(worldFiles.length-1, combinedFiles.length-1))
+                            document.getElementById("rightArrow").style.visibility = "visible";
+                        if(fileIndex != 0)
+                            document.getElementById("leftArrow").style.visibility = "visible";
+                    }
+                }
+            }
+            
+            function getNextRight(){
+                if(document.getElementById("leftArrow").style.visibility == "hidden")
+                    document.getElementById("leftArrow").style.visibility = "visible";
+
+                keyboardLocked = true;
+
+                // remove cone if there is a cone
+                if(scene.children.includes(cone))
+                    scene.remove(cone);
+
+                fileIndex++;
+                if(fileIndex == Math.max(worldFiles.length-1, combinedFiles.length-1))
+                    document.getElementById("rightArrow").style.visibility = "hidden";
+
+                generateBlocks();    
+            }
+            
+            function getNextLeft(){
+                if(document.getElementById("rightArrow").style.visibility == "hidden")
+                    document.getElementById("rightArrow").style.visibility = "visible";
+
+                keyboardLocked = true;
+
+                // remove cone if there is a cone
+                if(scene.children.includes(cone))
+                    scene.remove(cone);
+
+                fileIndex--;
+                if(fileIndex == 0)
+                    document.getElementById("leftArrow").style.visibility = "hidden";
+
+                generateBlocks();  
+            }
+            
+            function play(){
+                animationMode = true;
+                keyboardLocked = true;
+
+                document.getElementById("leftArrow").style.visibility = "hidden";
+                document.getElementById("play").style.visibility = "hidden";
+                document.getElementById("rightArrow").style.visibility = "hidden";
+
+                // remove old cone if it is there
+                if(scene.children.includes(cone))
+                    scene.remove(cone);
+
+                // set up new cone
+                cone = new THREE.Mesh( coneGeometry, coneMaterial );
+                cone.position.set(0, animationModeBlockHeight+blockFaceSize, 0);
+                cone.rotation.y = Math.PI/2.0;
+                cone.rotation.z = Math.PI/2.0;
+                scene.add( cone );
+
+
+                generateActions();
+
+                timer = new Timer();
+                intervalId = timer.setInterval(nextStep, 10000);
+            }
+            
+
+			function animate() {
+                
+                keyboard.update();
+                
+                // handle right arrow (increment pointer)
+                if (!animationMode && !keyboardLocked && filesLoaded && (fileIndex < (worldFiles.length-1) || fileIndex < (combinedFiles.length-1)) && keyboard.up("right"))
+                    getNextRight();
+                
+                // handle left arrow (decrement pointer)
+                else if (!animationMode && (fileIndex>0) && !keyboardLocked && filesLoaded && keyboard.up("left"))
+                    getNextLeft();
+                
+                // handle down key press (play animation)
+                else if(filesLoaded && !keyboardLocked && keyboard.up("down"))
+                    play();
+
+				requestAnimationFrame( animate );
+
+				render();
+				//stats.update();
+
+			}
+
+			function render() {
+        
+				controls.update( clock.getDelta() );
+				renderer.render( scene, camera );
+                if(animationMode)
+                    timer.update(delta);
+
+			}
+
+		</script>
+
+	</body>
+</html>

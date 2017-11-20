@@ -1,0 +1,64 @@
+doctype html              
+html.
+    <head>
+        <title>VoxelBuild catalog</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+        <link rel="stylesheet" href="/stylesheets/flex-images.css">
+        <style type="text/css">
+        html { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 1.02em; }
+        #limit {
+            max-width: 300px;
+        }
+        </style>
+    </head>
+    <body>
+        <script src="javascripts/flex-images.min.js"></script>
+        <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js" ></script>
+    
+        <div id="container" style="max-width:1200px;padding:0 10px;margin:40px auto"></div>
+        <script>
+            var container, outerDiv, innerDiv, imageDiv, captionDiv;
+            init();
+                
+            function init()
+            {
+                container = document.getElementById( 'container' );
+                
+                outerDiv = document.createElement('div');
+                outerDiv.setAttribute("id", "outerDiv");
+                outerDiv.setAttribute("class", "flex-images");
+                
+                $.ajax({
+                    url: "http://localhost:3000/javascripts/runinfo.json",
+                    dataType: "json",
+                    success: function(response) {
+                        $.each(response.results, function(index, entry) {
+                            innerDiv = document.createElement('div');
+                            innerDiv.setAttribute("class", "item");
+                            innerDiv.setAttribute("data-w", "1920");
+                            innerDiv.setAttribute("data-h", "992");
+                            innerDiv.setAttribute("id", "limit");
+                            
+                            imageDiv = document.createElement('div');
+                            imageDiv.innerHTML = '<img style="max-width:100%" src="/images/' + this.imagefile + '">';
+                            imageDiv.setAttribute("class", "img");
+                            
+                            captionDiv = document.createElement('div');
+                            captionDiv.setAttribute("class", "bottom");
+                            captionDiv.setAttribute("align", "center");
+                            captionDiv.innerHTML = "<b>" + this.genome + "</b>" + "<br>Height " + this.height + "<br>" + this.numblocks + " Blocks";
+                            
+                            innerDiv.appendChild(imageDiv);
+                            innerDiv.appendChild(captionDiv);
+                            outerDiv.appendChild(innerDiv);
+                        });
+                    }
+                });
+                
+                container.appendChild(outerDiv);
+                new flexImages({ selector: '.flex-images', rowHeight: 140 });
+                
+            } 
+        </script>
+    </body>

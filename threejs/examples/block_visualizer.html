@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Block visualizer</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				color: #61443e;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+
+				background-color: #bfd1e5;
+				margin: 0px;
+				overflow: hidden;
+			}
+
+			#info {
+				position: absolute;
+				top: 0px; width: 100%;
+				padding: 5px;
+			}
+
+			a {
+
+				color: #a06851;
+			}
+
+			#oldie {
+				background:rgb(100,0,0) !important;
+				color:#fff !important;
+				margin-top:10em !important;
+			}
+			#oldie a { color:#fff }
+
+		</style>
+	</head>
+	<body>
+
+		<div id="container"><br /><br /><br /><br /><br />Generating world...</div>
+
+		<script src="../build/three.js"></script>
+
+		<script src="js/controls/FirstPersonControls.js"></script>
+        <script src="js/controls/TrackballControls.js"></script>
+        <script src="js/KeyboardState.js"></script>
+		<script src="js/ImprovedNoise.js"></script>
+		<script src="js/Detector.js"></script>
+		<script src="js/libs/stats.min.js"></script>
+        <script src="papaparse/papaparse.min.js"></script>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+
+		<script>
+
+			if ( ! Detector.webgl ) {
+
+				Detector.addGetWebGLMessage();
+				document.getElementById( 'container' ).innerHTML = "";
+
+			}
+
+			var info, container, stats, camera, controls, scene, renderer, matrix, mesh, actorMesh, cone, pxGeometry, 
+                nxGeometry, pyGeometry, pzGeometry, nzGeometry, geometry, texture, mesh;
+                
+			var worldWidth, worldDepth, worldHeight, worldHalfWidth, worldHalfDepth, worldHalfHeight, data;
+
+			var clock = new THREE.Clock();
+            
+            var blockList = new Array();
+            var numBlocks, fileIndex, jsonData, storedE;
+            var storedFiles, keyboardLocked, filesLoaded;
+            
+            var colorVal, blockFaceSize, blockGeometry;
+            var f;
+            
+            var keyboard = new KeyboardState();
+
+			init();
+			animate();
+
+			function init() {
+                
+                keyboardLocked = false;
+                filesLoaded = false;
+                
+                scene = new THREE.Scene();
+				container = document.getElementById( 'container' );
+                
+                // initialize camera and lights
+                camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 20000 );
+                camera.position.x = 0;
+                camera.position.y = 2000.0;
+                camera.position.z = 1500.0;
+                camera.rotation.y = 180 * Math.PI / 180;
+                //camera.rotation.x = 90 * Math.PI / 180;
+                scene.add(camera);
+
+                var ambientLight = new THREE.AmbientLight( 0xcccccc );
+                scene.add( ambientLight );
+
+                var directionalLight = new THREE.DirectionalLight( 0xffffff, 2 );
+                directionalLight.position.set( 1, 1, 0.5 ).normalize();
+                scene.add( directionalLight );
+
+				//controls = new THREE.FirstPersonControls( camera );
+                controls = new THREE.TrackballControls( camera );
+                
+				controls.movementSpeed = 1000;
+				controls.lookSpeed = 0.125;
+				controls.lookVertical = true;
+
+				renderer = new THREE.WebGLRenderer();
+				renderer.setClearColor( 0xbfd1e5 );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+				container.innerHTML = "";
+				container.appendChild( renderer.domElement );
+
+				stats = new Stats();
+				container.appendChild( stats.dom );
+                
+                info = document.createElement( 'div' );
+				info.style.position = 'absolute';
+				info.style.top = '10px';
+				info.style.width = '100%';
+				info.style.textAlign = 'center';
+				info.innerHTML = 'JSON file: <input id="the-file-input" multiple="multiple" type="file" onchange="handleFiles(this.files)" accept=".json">';
+				container.appendChild( info );
+
+				window.addEventListener( 'resize', onWindowResize, false );
+                
+                fileIndex = 0;
+                
+                colorVal = 255.0;
+                blockFaceSize = 100;
+                blockGeometry = new THREE.BoxGeometry( blockFaceSize, blockFaceSize, blockFaceSize );
+			}
+            
+            function handleFiles(files){
+                matrix = new THREE.Matrix4();
+
+                // filter out irrelevant JSON files
+                storedFiles = new Array();
+                for(var i=0; i<files.length; i++)
+                {
+                    if(files[i].name.includes("world"))
+                        storedFiles.push(files[i]);    
+                }
+                
+                f = storedFiles[fileIndex];
+                info.innerHTML = f.name;
+                var reader = new FileReader();
+                
+                reader.onload = (function(theFile) {
+                    return function(e) {
+                        
+                        filesLoaded = true;
+                        
+                        // Read JSON and generate blocks
+                        jsonData = $.parseJSON(e.target.result);
+
+                        worldWidth = jsonData.upperBound[0] - jsonData.lowerBound[0] + 1;
+                        worldDepth = jsonData.upperBound[1] - jsonData.lowerBound[1] + 1;
+                        worldHeight = jsonData.upperBound[2] - jsonData.lowerBound[2];
+
+                        worldHalfWidth = worldWidth / 2;
+                        worldHalfDepth = worldDepth / 2;
+                        data = generateHeight( worldWidth, worldDepth );
+
+                        pxGeometry = new THREE.PlaneBufferGeometry( 100, 100 );
+                        pxGeometry.attributes.uv.array[ 1 ] = 0.5;
+                        pxGeometry.attributes.uv.array[ 3 ] = 0.5;
+                        pxGeometry.rotateY( Math.PI / 2 );
+                        pxGeometry.translate( 50, 0, 0 );
+
+                        nxGeometry = new THREE.PlaneBufferGeometry( 100, 100 );
+                        nxGeometry.attributes.uv.array[ 1 ] = 0.5;
+                        nxGeometry.attributes.uv.array[ 3 ] = 0.5;
+                        nxGeometry.rotateY( - Math.PI / 2 );
+                        nxGeometry.translate( - 50, 0, 0 );
+
+                        pyGeometry = new THREE.PlaneBufferGeometry( 100, 100 );
+                        pyGeometry.attributes.uv.array[ 5 ] = 0.5;
+                        pyGeometry.attributes.uv.array[ 7 ] = 0.5;
+                        pyGeometry.rotateX( - Math.PI / 2 );
+                        pyGeometry.translate( 0, 50, 0 );
+
+                        pzGeometry = new THREE.PlaneBufferGeometry( 100, 100 );
+                        pzGeometry.attributes.uv.array[ 1 ] = 0.5;
+                        pzGeometry.attributes.uv.array[ 3 ] = 0.5;
+                        pzGeometry.translate( 0, 0, 50 );
+
+                        nzGeometry = new THREE.PlaneBufferGeometry( 100, 100 );
+                        nzGeometry.attributes.uv.array[ 1 ] = 0.5;
+                        nzGeometry.attributes.uv.array[ 3 ] = 0.5;
+                        nzGeometry.rotateY( Math.PI );
+                        nzGeometry.translate( 0, 0, -50 );
+
+                        // BufferGeometry cannot be merged yet.
+                        var tmpGeometry = new THREE.Geometry();
+                        var pxTmpGeometry = new THREE.Geometry().fromBufferGeometry( pxGeometry );
+                        var nxTmpGeometry = new THREE.Geometry().fromBufferGeometry( nxGeometry );
+                        var pyTmpGeometry = new THREE.Geometry().fromBufferGeometry( pyGeometry );
+                        var pzTmpGeometry = new THREE.Geometry().fromBufferGeometry( pzGeometry );
+                        var nzTmpGeometry = new THREE.Geometry().fromBufferGeometry( nzGeometry );
+
+                        for ( var y = 0; y < worldDepth; y ++ ) {
+
+                            for ( var x = 0; x < worldWidth; x ++ ) {
+
+                                //var h = getY( x, z );
+                                var h = 0;
+
+                                matrix.makeTranslation(
+                                    x * 100 - worldHalfWidth * 100,
+                                    h * 100,
+                                    y * 100 - worldHalfDepth * 100
+                                );
+
+                                var px = getY( x + 1, y );
+                                var nx = getY( x - 1, y );
+                                var pz = getY( x, y + 1 );
+                                var nz = getY( x, y - 1 );
+
+                                tmpGeometry.merge( pyTmpGeometry, matrix );
+
+                                if ( ( px !== h && px !== h + 1 ) || x === 0 ) {
+
+                                    tmpGeometry.merge( pxTmpGeometry, matrix );
+
+                                }
+
+                                if ( ( nx !== h && nx !== h + 1 ) || x === worldWidth - 1 ) {
+
+                                    tmpGeometry.merge( nxTmpGeometry, matrix );
+
+                                }
+
+                                if ( ( pz !== h && pz !== h + 1 ) || y === worldDepth - 1 ) {
+
+                                    tmpGeometry.merge( pzTmpGeometry, matrix );
+
+                                }
+
+                                if ( ( nz !== h && nz !== h + 1 ) || y === 0 ) {
+
+                                    tmpGeometry.merge( nzTmpGeometry, matrix );
+
+                                }
+
+                            }
+
+                        }
+
+                        geometry = new THREE.BufferGeometry().fromGeometry( tmpGeometry );
+                        geometry.computeBoundingSphere();
+
+                        texture = new THREE.TextureLoader().load( 'textures/minecraft/atlas.png' );
+                        texture.magFilter = THREE.NearestFilter;
+                        texture.minFilter = THREE.LinearMipMapLinearFilter;
+
+                        mesh = new THREE.Mesh( geometry, new THREE.MeshLambertMaterial( { map: texture } ) );
+                        scene.add( mesh );
+
+                     blockList = new Array();
+                    // generate new blocks
+                    numBlocks = 0;
+                    for ( var i = 0; i < jsonData.blocks.length; i ++ ) {
+
+                        object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { color: Math.random() * 0xffffff } ) )
+                        object.position.set(jsonData.blocks[i][0]*blockFaceSize, blockFaceSize + jsonData.blocks[i][2]*blockFaceSize, jsonData.blocks[i][1]*blockFaceSize);
+
+                        object.castShadow = true;
+                        object.receiveShadow = true;
+                        scene.add( object );
+                        blockList.push(object);
+                        numBlocks++;
+                    }  
+
+                };
+                })(f);
+                                 
+				reader.readAsText(f);   
+            }
+            
+            function generateBlocks(){
+                f = storedFiles[fileIndex];
+                info.innerHTML = f.name;
+                
+                var reader = new FileReader();
+                reader.onload = (function() {
+                    return function(e) {
+
+                        // clear previous blocks
+                        for( var i=0; i<blockList.length; i++){
+                            scene.remove(blockList[i]);
+                        }
+                        blockList = new Array();
+                        
+                        // parse savedFiles[fileIndex]
+                        jsonData = $.parseJSON(e.target.result);
+
+                        // generate new blocks
+                        numBlocks = 0;
+                        for ( var i = 0; i < jsonData.blocks.length; i ++ ) {
+
+                            object = new THREE.Mesh( blockGeometry, new THREE.MeshLambertMaterial( { color: Math.random() * 0xffffff } ) )
+                            object.position.set(jsonData.blocks[i][0]*blockFaceSize, blockFaceSize + jsonData.blocks[i][2]*blockFaceSize, jsonData.blocks[i][1]*blockFaceSize);
+
+                            object.castShadow = true;
+                            object.receiveShadow = true;
+                            scene.add( object );
+                            blockList.push(object);
+                            numBlocks++;
+                        }  
+                        
+                        // lock keyboard
+                        keyboardLocked = false;
+                    };
+                })(f);
+                                 
+				reader.readAsText(f); 
+            }
+            
+             function initActorMesh() {
+                var loader = new THREE.JSONLoader();
+                loader.load('models/monkeyhead.json', function(actorGeometry) {
+                    actorMesh = new THREE.Mesh(actorGeometry);
+                    scene.add(actorMesh);
+                });
+            }
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+				//controls.handleResize();
+
+			}
+
+			function generateHeight( width, height ) {
+
+				var data = [], perlin = new ImprovedNoise(),
+				size = width * height, quality = 2, z = Math.random() * 100;
+
+				for ( var j = 0; j < 4; j ++ ) {
+
+					if ( j === 0 ) for ( var i = 0; i < size; i ++ ) data[ i ] = 0;
+
+					for ( var i = 0; i < size; i ++ ) {
+
+						var x = i % width, y = ( i / width ) | 0;
+						data[ i ] += perlin.noise( x / quality, y / quality, z ) * quality;
+
+
+					}
+
+					quality *= 4;
+
+				}
+
+				return data;
+
+			}
+
+			function getY( x, z ) {
+
+				return ( data[ x + z * worldWidth ] * 0.2 ) | 0;
+
+			}
+
+			//
+
+			function animate() {
+                
+                keyboard.update();
+                if (!keyboardLocked && filesLoaded && (fileIndex < (storedFiles.length-1)) && keyboard.up("right"))
+                {
+                    keyboardLocked = true;
+                    fileIndex++;
+                    generateBlocks();
+                }
+                
+                else if ((fileIndex>0) && !keyboardLocked && filesLoaded && keyboard.up("left"))
+                {
+                    keyboardLocked = true;
+                    fileIndex--;
+                    generateBlocks();
+                }
+
+				requestAnimationFrame( animate );
+
+				render();
+				stats.update();
+
+			}
+
+			function render() {
+                
+                // parse next line of log file here
+                
+                // update position of actor, add blocks, etc.
+
+                //controls.object.lookAt(new THREE.Vector3(-1,-1,-1));
+                //camera.lookAt(scene.children[1].position);
+				controls.update( clock.getDelta() );
+				renderer.render( scene, camera );
+
+			}
+
+		</script>
+
+	</body>
+</html>
